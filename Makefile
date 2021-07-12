@@ -14,7 +14,7 @@ LATEXMK_EXEC := latexmk $(LATEXMK_OPTION)
 .PHONY: all install preview forever publish pub clean wipe
 
 all: install
-	$(LATEXMK_EXEC) -pvc- $(TARGET)
+	$(LATEXMK_EXEC) -pvc- $(TARGET); mv main.pdf 207515.pdf
 
 preview: install
 	$(LATEXMK_EXEC) -pv $(TARGET)

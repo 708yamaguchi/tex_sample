@@ -13,6 +13,7 @@
 \usepackage{wrapfig}
 \usepackage[subrefformat=parens,font=small]{subcaption}
 \captionsetup[figure]{font=small}
+\fontsize{10.5pt}{10.5pt}\selectfont
 
 \sloppy
 \flushbottom
@@ -52,17 +53,17 @@
 \begin{document}
 
 \title{\vspace{-15mm}
-  TEX SAMPLE
+  知能制御論　期末レポート
 }
-\author{John Smith}
+\author{\rightline{知能機械情報学専攻　207515　山口直也}}
 \date{}
 \maketitle
 \thispagestyle{empty}
 \pagestyle{empty}
 \large
 
-\section{Introduction}
-This is tex sample for creating pdf.
+\input src/report.tex
+\input src/python.tex
 
 \normalsize
 \end{document}
