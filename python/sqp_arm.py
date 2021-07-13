@@ -47,6 +47,23 @@ class Arm(object):
                 axis=0)
         return joints
 
+    def calc_joints_jac(self):
+        """
+        Calculate 2D jacobian of each joints
+        """
+        jac = np.array([[0, 0]])
+        angle_sum = 0
+        for i, ll in enumerate(self.link_length):
+            angle_sum = angle_sum + self.angle_vector[i]
+            # differential of link_vel in calc_joints
+            jac_vec = np.array([ll * -np.sin(np.deg2rad(angle_sum)),
+                                ll * np.cos(np.deg2rad(angle_sum))])
+            jac = np.append(
+                jac,
+                np.array([jac[-1] + jac_vec]),
+                axis=0)
+        return jac
+
     def get_angle_vector(self):
         """
         Get self.angle_vector
@@ -173,14 +190,47 @@ class SQP(object):
             for j in range(len(self.arm_copy.calc_joints())):
                 for k in self.arm_copy.get_obstacle():
                     def cons(x, waypoint, joint, obstacle):
+                        # print('cons start')
                         self.arm_copy.set_angle_vector(
                             x[waypoint*self.avl:(waypoint+1)*self.avl])
-                        joint = self.arm_copy.calc_joints()[joint]
+                        joint_pos = self.arm_copy.calc_joints()[joint]
                         distance = np.linalg.norm(
-                            np.array(joint) - np.array(obstacle[:2]))
+                            np.array(joint_pos) - np.array(obstacle[:2]))
+                        # print('cons_ret')
+                        # print(distance ** 2 - obstacle[2] ** 2)
                         return distance ** 2 - obstacle[2] ** 2
+                    def jac(x, waypoint, joint, obstacle):
+                        self.arm_copy.set_angle_vector(
+                            x[waypoint*self.avl:(waypoint+1)*self.avl])
+                        joint_pos = self.arm_copy.calc_joints()[joint]
+                        jac = self.arm_copy.calc_joints_jac()[1:]
+                        dsdf_dx = 2 * (joint_pos - np.array(obstacle[:2]))
+
+                        # print('len(x): ')
+                        # print(len(x))
+                        # print('dsdf_dx:')
+                        # print(dsdf_dx)
+                        # print('jac:')
+                        # print(jac)
+                        # # arm' jacobian * differential of SDF
+                        
+                        # print('np.dot(jac, dsdf_dx)')
+                        # print(np.dot(jac, dsdf_dx))
+
+                        # return np.dot(jac, dsdf_dx)
+                        # print('jac * dsdf_dx')
+                        # print(jac * dsdf_dx)
+                        ret = np.zeros(len(x))
+                        ret[waypoint*self.avl:(waypoint+1)*self.avl] = np.dot(jac, dsdf_dx)
+                        
+                        # print('ret')
+                        # print('waypoint')
+                        # print(waypoint)
+                        # print(ret)
+                        
+                        return ret
                     constraints.append(
-                        {'type': 'ineq', 'fun': cons, 'args': (i, j, k)})
+                        {'type': 'ineq', 'fun': cons, 'jac': jac, 'args': (i, j, k)})
         # 2. The last end effector position error must lower than max_error[m]
         max_error = 0.01
         def cons(x):
