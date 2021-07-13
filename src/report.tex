@@ -59,11 +59,11 @@
     & \underset{x}{\text{minimize}}
     & & f(x_{1:T}) \\
     & \text{subject to}
-    & & \|g_{l}(x_t) - pos_{obs}\|^2 - d_{obs} \geq 0, \; l = 1, \ldots, L, \; obs = 1, \ldots, N, \; t = 1, \ldots, T \\
+    & & \|g_{l}(x_t) - pos_{obs}\|^2 - d_{obs}^2 \geq 0, \; l = 1, \ldots, L, \; obs = 1, \ldots, N, \; t = 1, \ldots, T \\
     & \text{}
-    & & \|g_L(x_0) - pos_{start}\|^2 - err_{start} \leq 0 \\
+    & & \|g_L(x_0) - pos_{start}\|^2 - err_{start}^2 \leq 0 \\
     & \text{}
-    & & \|g_L(x_T) - pos_{goal}\|^2 - err_{goal} \leq 0 \\
+    & & \|g_L(x_T) - pos_{goal}\|^2 - err_{goal}^2 \leq 0 \\
     & \text{where}
     & & x_t\text{は、ロボットアームの関節角度ベクトル。時刻}t=1\text{から}t=T\text{まで存在する。} \\
     & \text{}
@@ -91,31 +91,51 @@
   \end{aligned}
 \end{equation*}
 
-ここで、$f(x)$は==B
-
-プログラムでの計算を高速化するため、目的関数$f(x)$に関してはヤコビアンを解析的に計算してscipyのminimize関数
+プログラムでの計算を高速化するため、目的関数および制約関数のヤコビアンを解析的に計算してscipyのminimize関数
 \footnote{scipyを使ったSLSQP計算 \url{https://docs.scipy.org/doc/scipy-1.2.1/reference/optimize.minimize-slsqp.html?highlight=minimize}}
 に渡します。
-残りの制約関数に関してはヤコビアン計算を行っていないため、scipy.minimize関数側で数値微分を行っています。
 
-プログラムで計算する際は計算の高速化を行うため、時系列関節角度$x_t$を縦に並べ一つのベクトルにしてから上記の式を行列で表現し、scipyのminimize関数
+以下のように変数を定義することで、目的関数$f(x_{1:T})$およびそのヤコビアン$\displaystyle \frac{df}{dx}$を解析的に計算できます。
+\begin{equation*}
+  A =
+  \begin{pmatrix}
+    I      &        &        & 0      \\
+    -I     & I      &        &        \\
+           & \ddots & \ddots &        \\
+    0      &        & -I     & I
+  \end{pmatrix}
+  B =
+  \begin{pmatrix}
+    pos_{start} \\
+    0           \\
+    \vdots      \\
+    0
+  \end{pmatrix}
+  x =
+  \begin{pmatrix}
+    x_1    \\
+    x_2    \\
+    \vdots \\
+    x_T
+  \end{pmatrix}
+\end{equation*}
 
+\begin{eqnarray*}
+  f(x) &=& \|Ax - B\|^2 \\
+  \frac{df}{dx} &=& 2 * A^T *(Ax - B)
+  %% \frac{df}{dx} &=& \frac{dh}{dg_{l}} * \frac{dg_{l}}{dx} \\
+  %%               &=& 2 * (g_{l}(x) - pos) * \frac{dg_{l}}{dx} \\
+  %%               &=& 2 * \left( \begin{array}{cc} \sum_{k=1}^{l} link_k\sin{x_k} - pos_x & \sum_{k=1}^{l} link_k\cos{x_k} \end{array} - pos_y \right) * \frac{dg_{l}}{dx} \\
+\end{eqnarray*}
 
-%% \begin{equation*}
-%% g_{j,obs}(x_t) - d_{obs}=\left( \begin{array}{cc}
-%% a & b \\
-%% c & d
-%% \end{array} \right)
-%% B=\left( \begin{array}{cc}
-%% a & b \\
-%% c & d
-%% \end{array} \right)
-%% C=\left( \begin{array}{cc}
-%% a & b \\
-%% c & d
-%% \end{array} \right)
-%% \end{equation*}
-
+\clearpage
+また制約関数については、$h(x) = \|g_{l}(x) - pos\|^2 - const$と定義すると、3つの制約関数のヤコビアンは全て$\displaystyle \pm \frac{dh}{dx}$で表現できます。
+さらに計算を進めると以下のようになります。ここで、$\displaystyle \frac{dg_{l}}{dx}$は$l$番目のジョイントにおけるロボットアームのヤコビアンです。計算は省略しますが、こんなところでもロボットアームのヤコビアンが登場するのが面白いと思いました。
+\begin{eqnarray*}
+  \frac{dh}{dx} &=& \frac{dh}{dg_{l}} * \frac{dg_{l}}{dx} \\
+                &=& 2 * (g_{l}(x) - pos) * \frac{dg_{l}}{dx} \\
+                &=& 2 * \left( \begin{array}{cc} \sum_{k=1}^{l} link_k\sin{x_k} - pos_x & \sum_{k=1}^{l} link_k\cos{x_k} \end{array} - pos_y \right) * \frac{dg_{l}}{dx} \\
+\end{eqnarray*}
 
 \section{設計時の条件や注意点}
 \begin{itemize}
@@ -123,4 +143,5 @@
   \item ジョイントにおける衝突判定しかしておらず、リンクの衝突判定はしていないです。なので、リンクにはぶつかる可能性があります。
   \item 障害物のSDFを簡単に計算するため、障害物は形状は円形のみとしています。
   \item 最適化の初期解は、ロボットアームの初期姿勢を補間点数分だけ並べたベクトルになっています。
+  \item scipyのminimize関数は、目的関数や制約関数のヤコビアンを渡さなくても自動的に数値微分を行い最適化計算が実行されます。しかし計算速度が遅くなるので、今回はヤコビアンを計算できるような目的関数・制約関数を設定しました。具体的には、\figref{figure:5dof}(b)(c)の計算時間が、ヤコビアンを渡す場合は5から6秒程度だったのに対し、ヤコビアンを渡さない場合は30秒程度でした。
 \end{itemize}

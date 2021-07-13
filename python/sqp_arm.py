@@ -295,6 +295,8 @@ class SQP(object):
                 A = np.append(A, horizontal, axis=0)
         B = np.zeros(self.waypoint_num * self.avl)
         B[0:self.avl] = np.array(self.start_av)
+        print(A)
+        print(B)
         return (lambda x: np.linalg.norm(np.dot(A, x) - B) ** 2,
                 lambda x: 2 * np.dot(A.T, np.dot(A, x) - B))
 
