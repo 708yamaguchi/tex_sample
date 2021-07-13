@@ -104,6 +104,42 @@ class Arm(object):
                 axis=0)
         return joints
 
+    def calc_specific_joints_jac(self, joint_num):
+        """
+        Calculate 2D jacobian at specific joint coords.
+        """
+        link_num = len(self.link_length)
+
+        def calc_jac_diff_j(j):
+            """
+            Calculate 2D jacobian at specific joint coords Differentiated by specific joint
+            """
+            jac = np.tile(np.array([[0, 0]]), (link_num, 1)).astype(np.float32)
+            angle_sum = 0
+            for k in range(joint_num):
+                angle_sum = angle_sum + self.angle_vector[k]
+                if k < j:
+                    continue
+                ll = self.link_length[k]
+                jac[j] = jac[j] + (np.pi / 180.) * np.array([ll * -np.sin(np.deg2rad(angle_sum)),
+                                                             ll * np.cos(np.deg2rad(angle_sum))])
+            return jac
+
+        ret = np.tile(np.array([[0, 0]]), (link_num, 1)).astype(np.float32)
+        for l in range(link_num):
+            ret = ret + calc_jac_diff_j(l)
+        return ret
+
+    def calc_joints_jac(self):
+        """
+        Calculate 2D jacobian of each joints
+        """
+        link_num = len(self.link_length)
+        jac = np.tile(np.array([[0, 0]]), (link_num+1, link_num, 1)).astype(np.float32)
+        for i in range(link_num+1):
+            jac[i] = self.calc_specific_joints_jac(i)
+        return jac
+
     def get_angle_vector(self):
         """
         Get self.angle_vector
@@ -228,16 +264,27 @@ class SQP(object):
         # 1. obstacle avoidance
         for i in range(self.waypoint_num):
             for j in range(len(self.arm_copy.calc_joints())):
+                if j == 0:
+                    continue
                 for k in self.arm_copy.get_obstacle():
                     def cons(x, waypoint, joint, obstacle):
                         self.arm_copy.set_angle_vector(
                             x[waypoint*self.avl:(waypoint+1)*self.avl])
-                        joint = self.arm_copy.calc_joints()[joint]
+                        joint_pos = self.arm_copy.calc_joints()[joint]
                         distance = np.linalg.norm(
-                            np.array(joint) - np.array(obstacle[:2]))
+                            np.array(joint_pos) - np.array(obstacle[:2]))
                         return distance ** 2 - obstacle[2] ** 2
+                    def jac(x, waypoint, joint, obstacle):
+                        self.arm_copy.set_angle_vector(
+                            x[waypoint*self.avl:(waypoint+1)*self.avl])
+                        joint_pos = self.arm_copy.calc_joints()[joint]
+                        joint_jac = self.arm_copy.calc_joints_jac()[joint]
+                        dsdf_dx = 2 * (joint_pos - np.array(obstacle[:2]))
+                        ret = np.zeros(len(x))
+                        ret[waypoint*self.avl:(waypoint+1)*self.avl] = np.dot(joint_jac, dsdf_dx)
+                        return ret
                     constraints.append(
-                        {'type': 'ineq', 'fun': cons, 'args': (i, j, k)})
+                        {'type': 'ineq', 'fun': cons, 'jac': jac, 'args': (i, j, k)})
         # 2. The last end effector position error must lower than max_error[m]
         max_error = 0.01
         def cons(x):
@@ -246,8 +293,17 @@ class SQP(object):
             joints = self.arm_copy.calc_joints()
             ee_error = np.linalg.norm(
                 np.array(joints[-1]) - np.array(self.last_ee))
-            return max_error - ee_error
-        constraints.append({'type': 'ineq', 'fun': cons})
+            return max_error ** 2 - ee_error ** 2
+        def jac(x):
+            self.arm_copy.set_angle_vector(
+                x[(self.waypoint_num-1)*self.avl:self.waypoint_num*self.avl])
+            joint_pos = self.arm_copy.calc_joints()[-1]
+            joint_jac = self.arm_copy.calc_joints_jac()[-1]
+            dsdf_dx = 2 * (np.array(joint_pos) - np.array(self.last_ee))
+            ret = np.zeros(len(x))
+            ret[(self.waypoint_num-1)*self.avl:self.waypoint_num*self.avl] = np.dot(joint_jac, dsdf_dx)
+            return -ret
+        constraints.append({'type': 'ineq', 'fun': cons, 'jac': jac})
         # 3. The start end effector position error must lower than max_error[m]
         def cons(x):
             self.arm_copy.set_angle_vector(
@@ -255,9 +311,18 @@ class SQP(object):
             joints = self.arm_copy.calc_joints()
             ee_error = np.linalg.norm(
                 np.array(joints[-1]) - np.array(self.start_ee))
-            return max_error - ee_error
-        constraints.append({'type': 'ineq', 'fun': cons})
-        return constraints  # jac is TODO, but seems difficult
+            return max_error ** 2 - ee_error ** 2
+        def jac(x):
+            self.arm_copy.set_angle_vector(
+                x[0:self.avl])
+            joint_pos = self.arm_copy.calc_joints()[-1]
+            joint_jac = self.arm_copy.calc_joints_jac()[-1]
+            dsdf_dx = 2 * (np.array(joint_pos) - np.array(self.start_ee))
+            ret = np.zeros(len(x))
+            ret[0:self.avl] = np.dot(joint_jac, dsdf_dx)
+            return -ret
+        constraints.append({'type': 'ineq', 'fun': cons, 'jac': jac})
+        return constraints
 
     # Set objective function: sum of angle vector velocity
     def obj_func_and_jac(self):
@@ -299,6 +364,7 @@ class SQP(object):
                           bounds=[(-720, 720)] * self.avl * self.waypoint_num,
                           x0=self.start_av*self.waypoint_num,
                           constraints=self.constraints, method='SLSQP')
+                          # options={"maxiter": 500, "verbose": 2})
         print('t=0: {}'.format(self.start_av))
         self.waypoints = [self.start_av]
         for i in range(self.waypoint_num):
@@ -376,7 +442,7 @@ def sample_sqp():
     # Case 2-2
     arm = Arm([0.6, 0.5, 0.4, 0.3, 0.2])
     arm.set_angle_vector([0, 0, 0, 0, 0])
-    arm.add_obstacle([1.3, 1.3, 0.5])
+    arm.add_obstacle([1.1, 1.1, 0.5])
     arm.add_obstacle([1.0, -0.5, 0.1])
     sqp = SQP(arm, target_end_effector_pos=[-1.4, 0.5], waypoint_num=10)
     sqp.make_plan()
@@ -385,7 +451,7 @@ def sample_sqp():
     # Case 2-3 (failure)
     arm = Arm([0.6, 0.5, 0.4, 0.3, 0.2])
     arm.set_angle_vector([0, 0, 0, 0, 0])
-    arm.add_obstacle([1.4, 1.4, 0.5])
+    arm.add_obstacle([1.2, 1.2, 0.5])
     arm.add_obstacle([1.0, -0.5, 0.1])
     sqp = SQP(arm, target_end_effector_pos=[-1.4, 0.5], waypoint_num=10)
     sqp.make_plan()
