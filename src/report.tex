@@ -41,7 +41,7 @@
 \begin{itemize}
   \item 制約条件
   \begin{itemize}
-    \item ロボットアームのジョイントが円形障害物とぶつからない
+    \item ロボットアームの各リンク端点が円形障害物とぶつからない
     \item 最適化計算で出力された軌道の最初のロボットアームのエンドエフェクタの位置と、現在のロボットアームのエンドエフェクタの位置の距離が、一定値以下
     \item 最適化計算で出力された軌道の最後のロボットアームのエンドエフェクタの位置と、移動先のロボットアームのエンドエフェクタの位置の距離が、一定値以下
   \end{itemize}
@@ -52,34 +52,38 @@
     \end{itemize}
 \end{itemize}
 
-以上の条件を数式で表現すると以下のようになります。
+以上の条件を最適化の枠組みで表現すると以下のようになります。
 
 \begin{equation*}
   \begin{aligned}
     & \underset{x}{\text{minimize}}
     & & f(x_{1:T}) \\
     & \text{subject to}
-    & & g_{j,obs}(x_t) - d_{obs} \geq 0, \; j = 1, \ldots, M, \; obs = 1, \ldots, N, \; t = 1, \ldots, T \\
+    & & \|g_{l}(x_t) - pos_{obs}\|^2 - d_{obs} \geq 0, \; l = 1, \ldots, L, \; obs = 1, \ldots, N, \; t = 1, \ldots, T \\
     & \text{}
-    & & \|h(x_0) - pos_{start}\|^2 - err_{start} \leq 0 \\
+    & & \|g_L(x_0) - pos_{start}\|^2 - err_{start} \leq 0 \\
     & \text{}
-    & & \|h(x_T) - pos_{goal}\|^2 - err_{goal} \leq 0 \\
+    & & \|g_L(x_T) - pos_{goal}\|^2 - err_{goal} \leq 0 \\
     & \text{where}
     & & x_t\text{は、ロボットアームの関節角度ベクトル。時刻}t=1\text{から}t=T\text{まで存在する。} \\
     & \text{}
-    & & j\text{は、}M\text{自由度ロボットアームのジョイント番号。} \\
+    & & l\text{は、}L\text{リンクあるロボットアームのジョイント番号。} \\
     & \text{}
     & & obs\text{は、}N\text{個ある円形障害物の番号。} \\
-    & \text{}
-    & & d_{obs}\text{は、}obs\text{番目の円形障害物の半径。} \\
     & \text{}
     & & f(x_{1:T})\text{は、隣り合う補間点におけるロボットアームの関節角度列の差分の二乗和} \\
     & \text{}
     & & \text{　　　すなわち、}f(x_{1:T}) = \sum_{t=1}^{T-1} \|x_{t+1} - x_t\|^2 \\
     & \text{}
-    & & g_{j,obs}(x_t)\text{は、時刻}t{の補間点における}j\text{番目のジョイント位置と}obs\text{番目の障害物の距離} \\
+    & & pos_{obs}\text{は、}obs\text{番目の障害物の位置} \\
     & \text{}
-    & & h(x)\text{は、関節角度}x\text{におけるロボットアームの手先位置} \\
+    & & d_{obs}\text{は、}obs\text{番目の円形障害物の半径} \\
+    & \text{}
+    & & g_{l}(x)\text{は、関節角度}x{において、ルートから数えて}l\text{番目のリンク終端位置}\\
+    & \text{}
+    & & \text{　　　ルートから数えて}k\text{番目のリンク長、関節角度をそれぞれ}link_k\text{、}x_k\text{とすると、}\\
+    & \text{}
+    & & \text{　　　二次元空間内では、}g_l(x) = \left( \begin{array}{cc} \sum_{k=1}^{l} link_k\sin{x_k} & \sum_{k=1}^{l} link_k\cos{x_k} \end{array} \right)\\
     & \text{}
     & & pos_{start}\text{および}pos_{goal}\text{は、軌道の始点および終点におけるロボットアームの手先目標位置} \\
     & \text{}
@@ -87,9 +91,31 @@
   \end{aligned}
 \end{equation*}
 
-プログラムで計算する際は計算の高速化を行うため、時系列関節角度$x_t$を縦に並べ一つのベクトルにしてから上記の式を行列で表現し、scipyのminimize関数
+ここで、$f(x)$は==B
+
+プログラムでの計算を高速化するため、目的関数$f(x)$に関してはヤコビアンを解析的に計算してscipyのminimize関数
 \footnote{scipyを使ったSLSQP計算 \url{https://docs.scipy.org/doc/scipy-1.2.1/reference/optimize.minimize-slsqp.html?highlight=minimize}}
-のSQPで解いています。
+に渡します。
+残りの制約関数に関してはヤコビアン計算を行っていないため、scipy.minimize関数側で数値微分を行っています。
+
+プログラムで計算する際は計算の高速化を行うため、時系列関節角度$x_t$を縦に並べ一つのベクトルにしてから上記の式を行列で表現し、scipyのminimize関数
+
+
+%% \begin{equation*}
+%% g_{j,obs}(x_t) - d_{obs}=\left( \begin{array}{cc}
+%% a & b \\
+%% c & d
+%% \end{array} \right)
+%% B=\left( \begin{array}{cc}
+%% a & b \\
+%% c & d
+%% \end{array} \right)
+%% C=\left( \begin{array}{cc}
+%% a & b \\
+%% c & d
+%% \end{array} \right)
+%% \end{equation*}
+
 
 \section{設計時の条件や注意点}
 \begin{itemize}
