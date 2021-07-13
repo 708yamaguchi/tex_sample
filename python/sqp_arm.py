@@ -47,21 +47,40 @@ class Arm(object):
                 axis=0)
         return joints
 
+    def calc_specific_joints_jac(self, joint_num):
+        """
+        Calculate 2D jacobian at specific joint coords.
+        """
+        link_num = len(self.link_length)
+
+        def calc_jac_diff_j(j):
+            """
+            Calculate 2D jacobian at specific joint coords Differentiated by specific joint
+            """
+            jac = np.tile(np.array([[0, 0]]), (link_num, 1)).astype(np.float32)
+            angle_sum = 0
+            for k in range(joint_num):
+                angle_sum = angle_sum + self.angle_vector[k]
+                if k < j:
+                    continue
+                ll = self.link_length[k]
+                jac[j] = jac[j] + (np.pi / 180.) * np.array([ll * -np.sin(np.deg2rad(angle_sum)),
+                                                             ll * np.cos(np.deg2rad(angle_sum))])
+            return jac
+
+        ret = np.tile(np.array([[0, 0]]), (link_num, 1)).astype(np.float32)
+        for l in range(link_num):
+            ret = ret + calc_jac_diff_j(l)
+        return ret
+
     def calc_joints_jac(self):
         """
         Calculate 2D jacobian of each joints
         """
-        jac = np.array([[0, 0]])
-        angle_sum = 0
-        for i, ll in enumerate(self.link_length):
-            angle_sum = angle_sum + self.angle_vector[i]
-            # differential of link_vel in calc_joints
-            jac_vec = np.array([ll * -np.sin(np.deg2rad(angle_sum)),
-                                ll * np.cos(np.deg2rad(angle_sum))])
-            jac = np.append(
-                jac,
-                np.array([jac[-1] + jac_vec]),
-                axis=0)
+        link_num = len(self.link_length)
+        jac = np.tile(np.array([[0, 0]]), (link_num+1, link_num, 1)).astype(np.float32)
+        for i in range(link_num+1):
+            jac[i] = self.calc_specific_joints_jac(i)
         return jac
 
     def get_angle_vector(self):
@@ -188,46 +207,24 @@ class SQP(object):
         # 1. obstacle avoidance
         for i in range(self.waypoint_num):
             for j in range(len(self.arm_copy.calc_joints())):
+                if j == 0:
+                    continue
                 for k in self.arm_copy.get_obstacle():
                     def cons(x, waypoint, joint, obstacle):
-                        # print('cons start')
                         self.arm_copy.set_angle_vector(
                             x[waypoint*self.avl:(waypoint+1)*self.avl])
                         joint_pos = self.arm_copy.calc_joints()[joint]
                         distance = np.linalg.norm(
                             np.array(joint_pos) - np.array(obstacle[:2]))
-                        # print('cons_ret')
-                        # print(distance ** 2 - obstacle[2] ** 2)
                         return distance ** 2 - obstacle[2] ** 2
                     def jac(x, waypoint, joint, obstacle):
                         self.arm_copy.set_angle_vector(
                             x[waypoint*self.avl:(waypoint+1)*self.avl])
                         joint_pos = self.arm_copy.calc_joints()[joint]
-                        jac = self.arm_copy.calc_joints_jac()[1:]
+                        joint_jac = self.arm_copy.calc_joints_jac()[joint]
                         dsdf_dx = 2 * (joint_pos - np.array(obstacle[:2]))
-
-                        # print('len(x): ')
-                        # print(len(x))
-                        # print('dsdf_dx:')
-                        # print(dsdf_dx)
-                        # print('jac:')
-                        # print(jac)
-                        # # arm' jacobian * differential of SDF
-                        
-                        # print('np.dot(jac, dsdf_dx)')
-                        # print(np.dot(jac, dsdf_dx))
-
-                        # return np.dot(jac, dsdf_dx)
-                        # print('jac * dsdf_dx')
-                        # print(jac * dsdf_dx)
                         ret = np.zeros(len(x))
-                        ret[waypoint*self.avl:(waypoint+1)*self.avl] = np.dot(jac, dsdf_dx)
-                        
-                        # print('ret')
-                        # print('waypoint')
-                        # print(waypoint)
-                        # print(ret)
-                        
+                        ret[waypoint*self.avl:(waypoint+1)*self.avl] = np.dot(joint_jac, dsdf_dx)
                         return ret
                     constraints.append(
                         {'type': 'ineq', 'fun': cons, 'jac': jac, 'args': (i, j, k)})
@@ -292,6 +289,7 @@ class SQP(object):
                           bounds=[(-720, 720)] * self.avl * self.waypoint_num,
                           x0=self.start_av*self.waypoint_num,
                           constraints=self.constraints, method='SLSQP')
+                          # options={"maxiter": 500, "verbose": 2})
         print('t=0: {}'.format(self.start_av))
         self.waypoints = [self.start_av]
         for i in range(self.waypoint_num):
